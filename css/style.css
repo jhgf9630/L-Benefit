@@ -1,0 +1,294 @@
+body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; font-family: 'Malgun Gothic', sans-serif; }
+#map { width: 100%; height: 100vh; z-index: 1; background: #f0f0f0; }
+
+/* ── 상단 컨트롤 바 (검색 + 필터만) ── */
+#controls {
+    position: absolute;
+    top: 15px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 70%;
+    max-width: 700px;
+    z-index: 1000;
+    background: rgba(255, 255, 255, 0.95);
+    padding: 10px 16px;
+    border-radius: 30px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+}
+
+/* ── 검색창 + X버튼 래퍼 ── */
+#searchWrapper {
+    flex-grow: 1;
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+#searchInput {
+    width: 100%;
+    padding: 9px 36px 9px 16px;
+    border: 1px solid #ddd;
+    border-radius: 20px;
+    outline: none;
+    font-size: 14px;
+    box-sizing: border-box;
+    font-family: 'Malgun Gothic', sans-serif;
+}
+
+#searchInput:focus {
+    border-color: #aaa;
+}
+
+#searchClear {
+    display: none;
+    position: absolute;
+    right: 9px;
+    width: 22px;
+    height: 22px;
+    align-items: center;
+    justify-content: center;
+    background: #ccc;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 10px;
+    color: white;
+    line-height: 1;
+    padding: 0;
+    flex-shrink: 0;
+}
+
+#searchClear:hover { background: #aaa; }
+
+/* ── 숨겨진 기존 select (커스텀 드롭다운으로 대체됨) ── */
+#categoryFilter { display: none; }
+
+/* ── 동기화 상태 — 좌하단 고정 ── */
+#syncStatusBar {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    z-index: 1000;
+    background: rgba(255, 255, 255, 0.88);
+    padding: 6px 14px;
+    border-radius: 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    pointer-events: none;
+}
+
+.sync-status {
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.sync-same    { color: #16a34a; }
+.sync-updated { color: #2563EB; }
+.sync-neutral { color: #9ca3af; }
+
+/* ── 해외 제휴 리스트 ── */
+#overseas-container { position: absolute; bottom: 30px; right: 20px; z-index: 1000; }
+
+#overseas-btn {
+    padding: 12px 20px; background: #2c3e50; color: white;
+    border: none; border-radius: 25px; cursor: pointer;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.3); font-weight: bold;
+    font-family: 'Malgun Gothic', sans-serif;
+}
+
+#overseas-popup {
+    position: absolute; bottom: 60px; right: 0;
+    width: 380px; max-height: 500px; background: white;
+    border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+    display: flex; flex-direction: column; overflow: hidden;
+}
+
+.hidden { display: none !important; }
+
+.popup-header {
+    background: #34495e; color: white; padding: 12px 15px;
+    display: flex; justify-content: space-between; align-items: center;
+    flex-shrink: 0;
+}
+
+.popup-header h4 { margin: 0; font-size: 14px; }
+
+.popup-header button {
+    background: none; border: none; color: white;
+    font-size: 18px; cursor: pointer; line-height: 1;
+}
+
+#overseasList { list-style: none; padding: 0; margin: 0; overflow-y: auto; }
+
+.overseas-category-header {
+    padding: 8px 15px;
+    background: #f1f5f9;
+    font-size: 12px;
+    font-weight: bold;
+    color: #475569;
+    border-bottom: 1px solid #e2e8f0;
+    letter-spacing: 0.03em;
+}
+
+.overseas-item {
+    padding: 12px 15px;
+    border-bottom: 1px solid #eee;
+    font-size: 13px;
+    transition: background 0.2s;
+}
+
+.overseas-item:hover { background: #f9f9f9; }
+
+.overseas-empty {
+    padding: 16px 15px;
+    color: #999;
+    font-size: 13px;
+    text-align: center;
+}
+
+/* ── 마커 팝업 공통 스타일 ── */
+.popup-content {
+    font-family: 'Malgun Gothic', sans-serif;
+    font-size: 13px;
+    line-height: 1.6;
+    min-width: 200px;
+}
+
+.popup-title {
+    font-size: 15px;
+    font-weight: bold;
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #eee;
+    color: #1a1a1a;
+}
+
+.popup-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 5px;
+    margin-bottom: 4px;
+    color: #333;
+    word-break: keep-all;
+}
+
+.popup-label {
+    font-weight: bold;
+    color: #555;
+    white-space: nowrap;
+    margin-right: 2px;
+}
+
+.popup-label::after { content: ": "; }
+
+.popup-link {
+    color: #3B82F6;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+.popup-link:hover { text-decoration: underline; }
+
+.leaflet-popup-content { margin: 12px 16px; }
+
+/* ── 검색 결과 없음 배너 ── */
+.no-results-banner {
+    display: none;
+    position: absolute;
+    top: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.65);
+    color: white;
+    padding: 10px 24px;
+    border-radius: 20px;
+    font-size: 14px;
+    pointer-events: none;
+    font-family: 'Malgun Gothic', sans-serif;
+}
+
+/* ── 마커 클러스터 아이콘 ── */
+.cluster-icon {
+    width: 36px;
+    height: 36px;
+    background: #2c3e50;
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: bold;
+    border: 2px solid white;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+}
+
+/* ── 커스텀 카테고리 드롭다운 ── */
+.custom-filter {
+    position: relative;
+    user-select: none;
+    flex-shrink: 0;
+}
+
+.custom-filter-selected {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border: 1px solid #ddd;
+    border-radius: 20px;
+    background: white;
+    cursor: pointer;
+    font-size: 14px;
+    white-space: nowrap;
+    min-width: 140px;
+    font-family: 'Malgun Gothic', sans-serif;
+}
+
+.custom-filter-selected:hover { border-color: #aaa; }
+
+.cf-icon { display: inline-flex; align-items: center; flex-shrink: 0; }
+
+.cf-icon-placeholder { display: inline-block; width: 18px; flex-shrink: 0; }
+
+.cf-label { flex-grow: 1; }
+
+.cf-arrow { font-size: 11px; color: #888; margin-left: 2px; }
+
+.custom-filter-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    min-width: 100%;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 12px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+    list-style: none;
+    padding: 4px 0;
+    margin: 0;
+    z-index: 2000;
+    overflow: hidden;
+}
+
+.custom-filter-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 16px;
+    font-size: 14px;
+    cursor: pointer;
+    white-space: nowrap;
+    font-family: 'Malgun Gothic', sans-serif;
+}
+
+.custom-filter-option:hover { background: #f3f4f6; }
+
+.custom-filter-option.active {
+    background: #eff6ff;
+    font-weight: bold;
+}
