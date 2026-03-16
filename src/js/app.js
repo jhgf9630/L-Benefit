@@ -35,8 +35,8 @@ async function initApp() {
   });
   map.addLayer(clusterLayer);
 
-  L.tileLayer('../map_tiles/{z}/{x}/{y}.png', {
-    minZoom: 7
+  L.tileLayer('../../map_tiles/{z}/{x}/{y}.png', {
+    minZoom: 7,
     maxZoom: 13
   }).addTo(map);
 
