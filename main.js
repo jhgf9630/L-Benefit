@@ -1,13 +1,13 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
-const fs = require('fs');
+const fs   = require('fs');
 const { downloadJSON } = require('./updater');
 
-const DATA_URL = "http://slm.lignex1.com/confluence/spaces/~76936/pages/181662037/DB/affiliates.json";
+const DATA_URL        = "http://slm.lignex1.com/confluence/download/attachments/181662037/affiliates.json";
 const BUNDLE_DATA_PATH = path.join(__dirname, "data", "affiliates.json");
 
 let syncStatus = {
-  status: "loading",
+  status:  "loading",
   message: "데이터 동기화 확인 중..."
 };
 
@@ -24,7 +24,7 @@ function trySendSyncComplete() {
 async function createWindow() {
 
   mainWindow = new BrowserWindow({
-    width: 1200,
+    width:  1200,
     height: 800,
     icon: path.join(__dirname, 'L-Benefit.ico'),
     autoHideMenuBar: true,
@@ -33,8 +33,7 @@ async function createWindow() {
     }
   });
 
-  mainWindow.loadFile("index.html");
-  // mainWindow.webContents.openDevTools(); // 디버깅용 — 배포 전 제거
+  mainWindow.loadFile(path.join(__dirname, "src", "index.html"));
 
   mainWindow.webContents.on("did-finish-load", () => {
     pageLoaded = true;
@@ -48,15 +47,13 @@ async function createWindow() {
   });
 }
 
-ipcMain.handle("get-sync-status", () => {
-  return syncStatus;
-});
+ipcMain.handle("get-sync-status", () => syncStatus);
 
 ipcMain.handle("get-userdata-path", () => {
   return path.join(app.getPath("userData"), "affiliates.json");
 });
 
-// 번들 내 data/affiliates.json을 fs로 직접 읽어서 반환
+// 번들 data/affiliates.json을 fs로 직접 읽어 반환
 ipcMain.handle("read-bundle-data", () => {
   try {
     const raw = fs.readFileSync(BUNDLE_DATA_PATH, "utf-8");

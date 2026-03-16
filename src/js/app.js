@@ -1,9 +1,7 @@
 const PANGYO_HOUSE = [37.4021, 127.1086];
 let map, clusterLayer;
 
-// userData 경로 우선으로 affiliates.json 로드
-// userData에 없으면 IPC를 통해 번들 data/affiliates.json을 fs로 읽음
-// (Electron file:// 환경에서 fetch 상대경로가 막히는 문제 우회)
+// userData 우선 → 없으면 IPC로 번들 파일 읽기
 async function syncData() {
   try {
     const userDataPath = await window.syncAPI.getDataPath();
@@ -12,27 +10,23 @@ async function syncData() {
     if (!res.ok) throw new Error("userData 파일 없음");
     return await res.json();
   } catch {
-    // fetch 대신 IPC(fs.readFileSync)로 번들 파일 읽기
     return await window.syncAPI.readBundleData();
   }
 }
 
-// 현재 국내 데이터 전역 보관 (X버튼에서 접근용)
 let currentDomestic = null;
-let currentCategory = 'all';
+let currentCategory  = 'all';
 
 async function initApp() {
   // 1. 지도 초기화
   map = L.map('map', { minZoom: 7, maxZoom: 13 }).setView(PANGYO_HOUSE, 12);
 
-  // 마커 클러스터 레이어 (leaflet.markercluster)
   clusterLayer = L.markerClusterGroup({
     showCoverageOnHover: false,
     maxClusterRadius: 1,
     iconCreateFunction: function(cluster) {
-      const count = cluster.getChildCount();
       return L.divIcon({
-        html: `<div class="cluster-icon">${count}</div>`,
+        html: `<div class="cluster-icon">${cluster.getChildCount()}</div>`,
         className: '',
         iconSize: [36, 36],
         iconAnchor: [18, 18]
@@ -41,18 +35,24 @@ async function initApp() {
   });
   map.addLayer(clusterLayer);
 
-  L.tileLayer('./map_tiles/{z}/{x}/{y}.png', {
-    minZoom: 7,
+  L.tileLayer('../map_tiles/{z}/{x}/{y}.png', {
+    minZoom: 7
     maxZoom: 13
   }).addTo(map);
 
-  // 2. 버튼 이벤트
+  // 2. 버튼 이벤트 — 해외 리스트
   document.getElementById('overseas-btn').onclick = () =>
     document.getElementById('overseas-popup').classList.toggle('hidden');
   document.getElementById('close-popup').onclick = () =>
     document.getElementById('overseas-popup').classList.add('hidden');
 
-  // 검색 X 버튼 이벤트
+  // 버튼 이벤트 — 국내 리스트
+  document.getElementById('domestic-btn').onclick = () =>
+    document.getElementById('domestic-popup').classList.toggle('hidden');
+  document.getElementById('close-domestic-popup').onclick = () =>
+    document.getElementById('domestic-popup').classList.add('hidden');
+
+  // 검색 X 버튼
   document.getElementById('searchClear').onclick = () => {
     document.getElementById('searchInput').value = '';
     document.getElementById('searchClear').style.display = 'none';
@@ -63,7 +63,7 @@ async function initApp() {
     if (currentDomestic) filterData(currentDomestic);
   };
 
-  // 3. 데이터 로드 및 렌더링
+  // 3. 데이터 로드
   const data = await syncData();
   if (data && data.affiliates) {
     const domestic = data.affiliates.filter(item => item.type === 'domestic');
@@ -71,11 +71,12 @@ async function initApp() {
     currentDomestic = domestic;
 
     renderMarkers(domestic);
+    renderDomesticList(domestic);
     renderOverseas(overseas);
     initCustomCategoryFilter(() => filterData(currentDomestic));
   }
 
-  // 4. 백그라운드 동기화 완료 시 실제 데이터 변경이 있을 때만 갱신
+  // 4. 백그라운드 동기화 완료 시 갱신
   window.syncAPI.onSyncComplete(async (result) => {
     if (result.status !== "updated") return;
     const updated = await syncData();
@@ -85,17 +86,14 @@ async function initApp() {
       currentDomestic = domestic;
 
       renderMarkers(domestic);
+      renderDomesticList(domestic);
       renderOverseas(overseas);
       initCustomCategoryFilter(() => filterData(currentDomestic));
     }
   });
 }
 
-// ─────────────────────────────────────────
-// 카테고리별 SVG 아이콘 (배경 없이 아이콘만)
-// office: 갈색 서류가방 / hotel: 파란색 건물
-// restaurant: 빨간색 포크&나이프 / etc: 노란색 별
-// ─────────────────────────────────────────
+// ─── SVG 아이콘 ───
 const CATEGORY_ICONS = {
   office: `
     <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
@@ -128,7 +126,6 @@ const CATEGORY_ICONS = {
     </svg>`
 };
 
-// 카테고리 필터용 작은 SVG (18x18)
 const CATEGORY_ICONS_SMALL = {
   office: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 32 32"><rect x="6" y="13" width="20" height="14" rx="2" fill="#92400E" stroke="#78350F" stroke-width="1.2"/><path d="M12 13v-3a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v3" fill="none" stroke="#78350F" stroke-width="1.5"/><line x1="6" y1="20" x2="26" y2="20" stroke="#78350F" stroke-width="1.2"/></svg>`,
   hotel: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 32 32"><rect x="5" y="8" width="22" height="20" rx="1.5" fill="#3B82F6" stroke="#1D4ED8" stroke-width="1.2"/><rect x="9" y="12" width="4" height="4" rx="0.5" fill="white"/><rect x="19" y="12" width="4" height="4" rx="0.5" fill="white"/><rect x="9" y="19" width="4" height="4" rx="0.5" fill="white"/><rect x="19" y="19" width="4" height="4" rx="0.5" fill="white"/><rect x="13" y="22" width="6" height="6" rx="0.5" fill="white"/><rect x="3" y="8" width="26" height="3" rx="1" fill="#1D4ED8"/></svg>`,
@@ -137,25 +134,15 @@ const CATEGORY_ICONS_SMALL = {
 };
 
 const CATEGORY_LABELS = {
-  all:        '전체 카테고리',
-  office:     '회사',
-  hotel:      '호텔',
-  restaurant: '식당',
-  etc:        '기타'
+  all: '전체 카테고리', office: '회사', hotel: '호텔', restaurant: '식당', etc: '기타'
 };
 
-// 해외 제휴 카테고리 레이블 — 카테고리 추가 시 여기에만 추가하면 됨
 const OVERSEAS_CATEGORY_LABELS = {
-  hotel:      '🏨 호텔',
-  restaurant: '🍽 식당',
-  shopping:   '🛍 쇼핑',
-  leisure:    '🎡 레저',
-  etc:        '⭐ 기타'
+  hotel: '🏨 호텔', restaurant: '🍽 식당', shopping: '🛍 쇼핑', leisure: '🎡 레저', etc: '⭐ 기타'
 };
 
-// <select>를 숨기고 커스텀 드롭다운으로 대체
+// ─── 커스텀 드롭다운 ───
 function initCustomCategoryFilter(onChangeCb) {
-  // 동기화 갱신 시 재생성 대응
   const existing = document.getElementById('customFilter');
   if (existing) existing.remove();
 
@@ -191,7 +178,6 @@ function initCustomCategoryFilter(onChangeCb) {
   options.forEach(opt => {
     const li = document.createElement('li');
     li.className = 'custom-filter-option' + (currentCategory === opt.value ? ' active' : '');
-    li.dataset.value = opt.value;
     li.innerHTML = opt.icon
       ? `<span class="cf-icon">${opt.icon}</span><span>${opt.label}</span>`
       : `<span class="cf-icon-placeholder"></span><span>${opt.label}</span>`;
@@ -210,20 +196,15 @@ function initCustomCategoryFilter(onChangeCb) {
     dropdown.appendChild(li);
   });
 
-  selected.addEventListener('click', (e) => {
-    e.stopPropagation();
-    dropdown.classList.toggle('hidden');
-  });
-
-  document.addEventListener('click', () => {
-    dropdown.classList.add('hidden');
-  });
+  selected.addEventListener('click', e => { e.stopPropagation(); dropdown.classList.toggle('hidden'); });
+  document.addEventListener('click', () => dropdown.classList.add('hidden'));
 
   wrapper.appendChild(selected);
   wrapper.appendChild(dropdown);
   select.parentNode.insertBefore(wrapper, select);
 }
 
+// ─── 아이콘 ───
 function getCategoryIcon(category) {
   const svg = CATEGORY_ICONS[category] || CATEGORY_ICONS.etc;
   return L.divIcon({
@@ -235,52 +216,65 @@ function getCategoryIcon(category) {
   });
 }
 
+// ─── 팝업 HTML ───
 function buildPopupHTML(item) {
   const address = item.address ? `<div class="popup-row">📍 <span class="popup-label">주소</span>${item.address}</div>` : '';
   const benefit = item.benefit ? `<div class="popup-row">🎁 <span class="popup-label">혜택</span>${item.benefit}</div>` : '';
-  const period  = item.period  ? `<div class="popup-row">📅 <span class="popup-label">기간</span>${item.period}</div>` : '';
-  const note    = item.note    ? `<div class="popup-row">📝 <span class="popup-label">비고</span>${item.note}</div>` : '';
+  const period  = item.period  ? `<div class="popup-row">📅 <span class="popup-label">기간</span>${item.period}</div>`  : '';
+  const note    = item.note    ? `<div class="popup-row">📝 <span class="popup-label">비고</span>${item.note}</div>`    : '';
   const link    = item.link    ? `<div class="popup-row">🔗 <a class="popup-link" href="${item.link}" target="_blank">자세히 보기</a></div>` : '';
-  return `
-    <div class="popup-content">
-      <div class="popup-title">${item.name}</div>
-      ${address}${benefit}${period}${note}${link}
-    </div>`;
+  return `<div class="popup-content"><div class="popup-title">${item.name}</div>${address}${benefit}${period}${note}${link}</div>`;
 }
 
-// 국내 마커 렌더링 (클러스터 레이어 사용)
+// ─── 지도 마커 렌더링 ───
 function renderMarkers(domesticItems) {
   clusterLayer.clearLayers();
-
-  if (domesticItems.length === 0) {
-    showNoResultsBanner(true);
-    return;
-  }
+  if (domesticItems.length === 0) { showNoResultsBanner(true); return; }
   showNoResultsBanner(false);
-
   domesticItems.forEach(item => {
-    const marker = L.marker([item.lat, item.lng], {
-      icon: getCategoryIcon(item.category)
-    });
+    const marker = L.marker([item.lat, item.lng], { icon: getCategoryIcon(item.category) });
     marker.bindPopup(buildPopupHTML(item), { maxWidth: 280 });
     clusterLayer.addLayer(marker);
   });
 }
 
-// 검색 결과 없음 배너
-function showNoResultsBanner(show) {
-  let banner = document.getElementById('noResultsBanner');
-  if (!banner) {
-    banner = document.createElement('div');
-    banner.id = 'noResultsBanner';
-    banner.className = 'no-results-banner';
-    banner.textContent = '검색 결과가 없습니다.';
-    document.body.appendChild(banner);
+// ─── 국내 리스트 렌더링 (카테고리별 그룹화) ───
+function renderDomesticList(domesticItems) {
+  const list = document.getElementById('domesticList');
+  list.innerHTML = '';
+
+  if (domesticItems.length === 0) {
+    list.innerHTML = '<li class="overseas-empty">국내 제휴 업체가 없습니다.</li>';
+    return;
   }
-  banner.style.display = show ? 'block' : 'none';
+
+  const groups = new Map();
+  domesticItems.forEach(item => {
+    const cat = item.category || 'etc';
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat).push(item);
+  });
+
+  const catLabels = {
+    office: '🏢 회사', hotel: '🏨 호텔', restaurant: '🍽 식당', etc: '⭐ 기타'
+  };
+
+  groups.forEach((items, cat) => {
+    const header = document.createElement('li');
+    header.className = 'overseas-category-header';
+    header.textContent = catLabels[cat] || `⭐ ${cat}`;
+    list.appendChild(header);
+
+    items.forEach(item => {
+      const li = document.createElement('li');
+      li.className = 'overseas-item';
+      li.innerHTML = buildPopupHTML(item);
+      list.appendChild(li);
+    });
+  });
 }
 
-// 해외 리스트 렌더링 — 카테고리별 그룹화
+// ─── 해외 리스트 렌더링 ───
 function renderOverseas(overseasItems) {
   const list = document.getElementById('overseasList');
   list.innerHTML = '';
@@ -290,7 +284,6 @@ function renderOverseas(overseasItems) {
     return;
   }
 
-  // 카테고리별 그룹화 — 순서 보장을 위해 Map 사용
   const groups = new Map();
   overseasItems.forEach(item => {
     const cat = item.category || 'etc';
@@ -313,11 +306,25 @@ function renderOverseas(overseasItems) {
   });
 }
 
+// ─── 검색 결과 없음 배너 ───
+function showNoResultsBanner(show) {
+  let banner = document.getElementById('noResultsBanner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'noResultsBanner';
+    banner.className = 'no-results-banner';
+    banner.textContent = '검색 결과가 없습니다.';
+    document.body.appendChild(banner);
+  }
+  banner.style.display = show ? 'block' : 'none';
+}
+
+// ─── 필터 ───
 function filterData(domesticItems) {
   const search = document.getElementById('searchInput').value.toLowerCase();
   const filtered = domesticItems.filter(item => {
     const matchSearch = item.name.toLowerCase().includes(search);
-    const matchCat = (currentCategory === 'all' || item.category === currentCategory);
+    const matchCat    = (currentCategory === 'all' || item.category === currentCategory);
     return matchSearch && matchCat;
   });
   renderMarkers(filtered);

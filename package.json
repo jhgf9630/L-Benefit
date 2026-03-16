@@ -3,13 +3,12 @@
   "version": "1.0.0",
   "main": "main.js",
   "scripts": {
-	"start": "electron .",
-    "build": "electron-packager . L-Benefit --platform=win32 --arch=x64 --icon=L-Benefit.ico --overwrite --ignore=build.bat --ignore=build.sh --ignore=\"\\.zip$\"",
+    "start": "electron .",
+    "build": "electron-packager . L-Benefit --platform=win32 --arch=x64 --icon=L-Benefit.ico --overwrite --out=. --ignore=build.bat --ignore=build.sh --ignore=\"\\.zip$\" --ignore=README.md",
     "pack": "node build-zip.js"
   },
   "devDependencies": {
     "electron": "^30.0.0",
-    "electron-packager": "^17.1.1",
-    "leaflet.markercluster": "^1.5.3"
+    "electron-packager": "^17.1.1"
   }
 }
