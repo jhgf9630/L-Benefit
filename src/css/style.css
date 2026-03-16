@@ -113,6 +113,13 @@ body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; font-family:
     font-size: 13px; transition: background 0.2s;
 }
 .overseas-item:hover { background: #f9f9f9; }
+
+.domestic-list-item {
+    cursor: pointer;
+}
+.domestic-list-item:hover {
+    background: #f0fdf4;
+}
 .overseas-empty { padding: 16px 15px; color: #999; font-size: 13px; text-align: center; }
 
 /* ── 마커 팝업 ── */

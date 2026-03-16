@@ -35,7 +35,7 @@ async function initApp() {
   });
   map.addLayer(clusterLayer);
 
-  L.tileLayer('../../map_tiles/{z}/{x}/{y}.png', {
+  L.tileLayer('../map_tiles/{z}/{x}/{y}.png', {
     minZoom: 7,
     maxZoom: 13
   }).addTo(map);
@@ -267,8 +267,30 @@ function renderDomesticList(domesticItems) {
 
     items.forEach(item => {
       const li = document.createElement('li');
-      li.className = 'overseas-item';
+      li.className = 'overseas-item domestic-list-item';
       li.innerHTML = buildPopupHTML(item);
+
+      // 클릭 시 지도 해당 위치로 이동 후 팝업 오픈
+      li.addEventListener('click', () => {
+        if (item.lat == null || item.lng == null) return;
+        const latlng = L.latLng(item.lat, item.lng);
+        map.setView(latlng, 13, { animate: true });
+
+        // 해당 마커 찾아서 팝업 열기
+        clusterLayer.eachLayer(marker => {
+          const mll = marker.getLatLng();
+          if (mll.lat === item.lat && mll.lng === item.lng) {
+            // 클러스터에 묶여 있으면 먼저 해제
+            clusterLayer.zoomToShowLayer(marker, () => {
+              marker.openPopup();
+            });
+          }
+        });
+
+        // 팝업 닫기
+        document.getElementById('domestic-popup').classList.add('hidden');
+      });
+
       list.appendChild(li);
     });
   });
