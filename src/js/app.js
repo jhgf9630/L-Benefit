@@ -217,12 +217,27 @@ function getCategoryIcon(category) {
 }
 
 // ─── 팝업 HTML ───
+// 링크 텍스트 클릭 시 클립보드 복사
+document.addEventListener('click', (e) => {
+  if (e.target.classList.contains('popup-link-text')) {
+    navigator.clipboard.writeText(e.target.textContent).then(() => {
+      const orig = e.target.title;
+      e.target.title = '복사됨!';
+      e.target.style.color = '#16a34a';
+      setTimeout(() => {
+        e.target.title = orig;
+        e.target.style.color = '';
+      }, 1500);
+    }).catch(() => {});
+  }
+});
+
 function buildPopupHTML(item) {
   const address = item.address ? `<div class="popup-row">📍 <span class="popup-label">주소</span>${item.address}</div>` : '';
   const benefit = item.benefit ? `<div class="popup-row">🎁 <span class="popup-label">혜택</span>${item.benefit}</div>` : '';
   const period  = item.period  ? `<div class="popup-row">📅 <span class="popup-label">기간</span>${item.period}</div>`  : '';
   const note    = item.note    ? `<div class="popup-row">📝 <span class="popup-label">비고</span>${item.note}</div>`    : '';
-  const link    = item.link    ? `<div class="popup-row">🔗 <a class="popup-link" href="${item.link}" target="_blank">자세히 보기</a></div>` : '';
+  const link    = item.link    ? `<div class="popup-row">🔗 <span class="popup-label">링크</span><span class="popup-link-text" title="클릭하여 복사">${item.link}</span></div>` : '';
   return `<div class="popup-content"><div class="popup-title">${item.name}</div>${address}${benefit}${period}${note}${link}</div>`;
 }
 
