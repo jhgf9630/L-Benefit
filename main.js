@@ -27,13 +27,29 @@ function openSlmLoginWindow() {
     let resolved    = false;
     let firstNavDone = false; // 최초 페이지 로드 무시용 플래그
 
+    // 로그인 창 전용 세션 생성 (메인 앱 세션과 분리)
+    const loginSession = session.fromPartition('persist:slm-login');
+
+    // CSP 및 cross-origin 제한 헤더 제거
+    loginSession.webRequest.onHeadersReceived((details, callback) => {
+      const headers = { ...details.responseHeaders };
+      delete headers['x-frame-options'];
+      delete headers['X-Frame-Options'];
+      delete headers['content-security-policy'];
+      delete headers['Content-Security-Policy'];
+      callback({ responseHeaders: headers });
+    });
+
     const loginWin = new BrowserWindow({
       width:  1000,
       height: 750,
       title:  "SLM 로그인 — 로그인 완료 후 창이 자동으로 닫힙니다",
       webPreferences: {
-        nodeIntegration:  false,
-        contextIsolation: true
+        nodeIntegration:             false,
+        contextIsolation:            true,
+        webSecurity:                 false,
+        allowRunningInsecureContent: true,
+        session:                     loginSession
       }
     });
 
@@ -70,12 +86,21 @@ function openSlmLoginWindow() {
 
         // slm.lignex1.com 도메인의 일반 페이지에 도달 = 로그인 완료
         if (u.hostname === "slm.lignex1.com") {
-          const cookies = await session.defaultSession.cookies.get({ domain: "slm.lignex1.com" });
-          console.log("[SLM] 쿠키 추출:", cookies.map(c => c.name));
+          // 전용 세션과 기본 세션 양쪽에서 쿠키 수집
+          const [cookies1, cookies2] = await Promise.all([
+            loginSession.cookies.get({ domain: "slm.lignex1.com" }),
+            session.defaultSession.cookies.get({ domain: "slm.lignex1.com" })
+          ]);
+          const allCookies = [...cookies1, ...cookies2];
+          // 중복 제거
+          const uniqueCookies = allCookies.filter(
+            (c, i, arr) => arr.findIndex(x => x.name === c.name) === i
+          );
+          console.log("[SLM] 쿠키 추출:", uniqueCookies.map(c => c.name));
 
-          if (cookies.length > 0) {
+          if (uniqueCookies.length > 0) {
             resolved = true;
-            const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join("; ");
+            const cookieStr = uniqueCookies.map(c => `${c.name}=${c.value}`).join("; ");
             loginWin.destroy();
             resolve(cookieStr);
           }
