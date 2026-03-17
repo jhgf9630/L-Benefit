@@ -3,6 +3,30 @@ const path = require('path');
 const fs   = require('fs');
 const { downloadJSON } = require('./updater');
 
+// ── 로그를 파일로도 저장 (exe 환경 디버깅용) ──
+function setupFileLogger() {
+  const logPath = path.join(app.getPath("userData"), "debug.log");
+  const logStream = fs.createWriteStream(logPath, { flags: 'a' });
+
+  const write = (level, args) => {
+    const line = `[${new Date().toISOString()}] [${level}] ${args.map(a =>
+      typeof a === 'object' ? JSON.stringify(a) : String(a)
+    ).join(' ')}\n`;
+    logStream.write(line);
+  };
+
+  const origLog   = console.log.bind(console);
+  const origError = console.error.bind(console);
+  const origWarn  = console.warn.bind(console);
+
+  console.log   = (...a) => { origLog(...a);   write('LOG',   a); };
+  console.error = (...a) => { origError(...a); write('ERROR', a); };
+  console.warn  = (...a) => { origWarn(...a);  write('WARN',  a); };
+
+  console.log(`===== L-Benefit 시작 : ${new Date().toISOString()} =====`);
+  console.log("로그 파일:", logPath);
+}
+
 const DATA_URL         = "http://slm.lignex1.com/confluence/download/attachments/181662037/affiliates.json";
 const BUNDLE_DATA_PATH = path.join(__dirname, "data", "affiliates.json");
 const SLM_BASE_URL     = "http://slm.lignex1.com";
@@ -153,6 +177,7 @@ async function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, "src", "index.html"));
+  mainWindow.webContents.openDevTools(); // 디버깅용 — 배포 전 제거
 
   mainWindow.webContents.on("did-finish-load", () => {
     pageLoaded = true;
@@ -183,4 +208,5 @@ ipcMain.handle("request-slm-sync", async () => {
   return syncStatus;
 });
 
+app.on('ready', setupFileLogger);
 app.whenReady().then(createWindow);
