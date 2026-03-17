@@ -24,13 +24,13 @@ function trySendSyncComplete() {
 function openSlmLoginWindow() {
   return new Promise((resolve, reject) => {
 
-    let resolved    = false;
-    let firstNavDone = false; // 최초 페이지 로드 무시용 플래그
+    let resolved     = false;
+    let firstNavDone = false;
+    let pollTimer    = null;
 
-    // 로그인 창 전용 세션 생성 (메인 앱 세션과 분리)
     const loginSession = session.fromPartition('persist:slm-login');
 
-    // CSP 및 cross-origin 제한 헤더 제거
+    // CSP / X-Frame-Options 헤더 제거 (iframe 로그인 허용)
     loginSession.webRequest.onHeadersReceived((details, callback) => {
       const headers = { ...details.responseHeaders };
       delete headers['x-frame-options'];
@@ -55,15 +55,10 @@ function openSlmLoginWindow() {
 
     loginWin.loadURL(SLM_BASE_URL);
 
+    // ── URL 기반 감지 ──
     loginWin.webContents.on("did-navigate", async (event, url) => {
       console.log("[SLM] did-navigate:", url);
-
-      // 최초 로드(SLM_BASE_URL 진입)는 무시하고 플래그만 세팅
-      if (!firstNavDone) {
-        firstNavDone = true;
-        return;
-      }
-
+      if (!firstNavDone) { firstNavDone = true; return; }
       await checkLoginSuccess(url);
     });
 
@@ -73,37 +68,57 @@ function openSlmLoginWindow() {
       await checkLoginSuccess(url);
     });
 
+    // ── 쿠키 폴링: 1초마다 SLM 세션 쿠키 존재 여부 확인 ──
+    // URL 감지가 실패해도 쿠키가 생기면 로그인 완료로 처리
+    pollTimer = setInterval(async () => {
+      if (resolved) { clearInterval(pollTimer); return; }
+      try {
+        const cookies = await loginSession.cookies.get({ domain: "slm.lignex1.com" });
+        // SLM 인증 쿠키가 있는지 확인 (이름에 SESSION, JSESSION, TOKEN 포함)
+        const authCookies = cookies.filter(c =>
+          /session|token|jsession|sso/i.test(c.name)
+        );
+        if (authCookies.length > 0) {
+          console.log("[SLM] 폴링으로 인증 쿠키 감지:", authCookies.map(c => c.name));
+          await handleLoginSuccess();
+        }
+      } catch (e) {
+        console.error("[SLM] 폴링 오류:", e.message);
+      }
+    }, 1000);
+
     async function checkLoginSuccess(url) {
       if (resolved) return;
+      const isAuthPage = ["login", "otp", "auth", "sso", "logout", "dologin"].some(
+        kw => url.toLowerCase().includes(kw)
+      );
+      if (isAuthPage) return;
+
+      const u = new URL(url);
+      if (u.hostname === "slm.lignex1.com") {
+        await handleLoginSuccess();
+      }
+    }
+
+    async function handleLoginSuccess() {
+      if (resolved) return;
       try {
-        const u = new URL(url);
-
-        // 로그인/인증 관련 페이지이면 아직 로그인 중 → 무시
-        const isAuthPage = ["login", "otp", "auth", "sso", "logout", "dologin"].some(
-          kw => url.toLowerCase().includes(kw)
+        const [cookies1, cookies2] = await Promise.all([
+          loginSession.cookies.get({ domain: "slm.lignex1.com" }),
+          session.defaultSession.cookies.get({ domain: "slm.lignex1.com" })
+        ]);
+        const allCookies = [...cookies1, ...cookies2];
+        const uniqueCookies = allCookies.filter(
+          (c, i, arr) => arr.findIndex(x => x.name === c.name) === i
         );
-        if (isAuthPage) return;
+        console.log("[SLM] 쿠키 추출:", uniqueCookies.map(c => c.name));
 
-        // slm.lignex1.com 도메인의 일반 페이지에 도달 = 로그인 완료
-        if (u.hostname === "slm.lignex1.com") {
-          // 전용 세션과 기본 세션 양쪽에서 쿠키 수집
-          const [cookies1, cookies2] = await Promise.all([
-            loginSession.cookies.get({ domain: "slm.lignex1.com" }),
-            session.defaultSession.cookies.get({ domain: "slm.lignex1.com" })
-          ]);
-          const allCookies = [...cookies1, ...cookies2];
-          // 중복 제거
-          const uniqueCookies = allCookies.filter(
-            (c, i, arr) => arr.findIndex(x => x.name === c.name) === i
-          );
-          console.log("[SLM] 쿠키 추출:", uniqueCookies.map(c => c.name));
-
-          if (uniqueCookies.length > 0) {
-            resolved = true;
-            const cookieStr = uniqueCookies.map(c => `${c.name}=${c.value}`).join("; ");
-            loginWin.destroy();
-            resolve(cookieStr);
-          }
+        if (uniqueCookies.length > 0) {
+          resolved = true;
+          clearInterval(pollTimer);
+          const cookieStr = uniqueCookies.map(c => `${c.name}=${c.value}`).join("; ");
+          loginWin.destroy();
+          resolve(cookieStr);
         }
       } catch (e) {
         console.error("[SLM] 쿠키 추출 오류:", e.message);
@@ -111,6 +126,7 @@ function openSlmLoginWindow() {
     }
 
     loginWin.on("closed", () => {
+      clearInterval(pollTimer);
       if (!resolved) {
         reject(new Error("SLM 로그인 창이 닫혔습니다."));
       }
@@ -120,7 +136,6 @@ function openSlmLoginWindow() {
 
 // ─────────────────────────────────────────
 // 동기화 실행
-// forceLogin: true 이면 쿠키 무시하고 로그인 창 강제 오픈
 // ─────────────────────────────────────────
 async function runSync(forceLogin = false) {
   syncStatus = { status: "loading", message: "데이터 동기화 확인 중..." };
@@ -155,7 +170,6 @@ async function createWindow() {
     trySendSyncComplete();
   });
 
-  // 백그라운드 동기화
   runSync();
 }
 
@@ -174,7 +188,7 @@ ipcMain.handle("read-bundle-data", () => {
   }
 });
 
-// 수동 재연동 IPC — 항상 로그인 창 강제 오픈
+// 수동 재연동 IPC
 ipcMain.handle("request-slm-sync", async () => {
   await runSync(true);
   return syncStatus;
