@@ -103,19 +103,13 @@ async function downloadFile(slmCookieStr) {
     : slmCookieStr;
 
   // atl_token (CSRF) 추출
-  // 로그인 페이지 HTML 앞부분 출력 (토큰 패턴 파악용)
-  console.log("[download] 로그인 페이지 HTML (앞 1000자):", r2getBody.substring(0, 1000));
-
-  // 다양한 패턴으로 CSRF 토큰 탐색
-  const atlTokenMatch =
-    r2getBody.match(/name="atl_token"[^>]*value="([^"]+)"/) ||
-    r2getBody.match(/value="([^"]+)"[^>]*name="atl_token"/) ||
-    r2getBody.match(/"atl_token"\s*:\s*"([^"]+)"/) ||
-    r2getBody.match(/atl_token=([^&"]+)/);
+  // <meta name="atlassian-token" content="..."> 에서 토큰 추출
+  const atlTokenMatch = r2getBody.match(/name="atlassian-token"[^>]*content="([^"]+)"/);
   const atlToken = atlTokenMatch ? atlTokenMatch[1] : "";
-  console.log("[download] 2단계 GET:", r2get.statusCode, "atl_token:", atlToken || "없음", "Set-Cookie:", setCookies2get);
+  console.log("[download] 2단계 GET:", r2get.statusCode, "atlassian-token:", atlToken || "없음", "Set-Cookie:", setCookies2get);
 
-  // ── 3단계: Confluence 로그인 POST (CSRF 토큰 포함) ──
+  // ── 3단계: Confluence 로그인 POST ──
+  // atlassian-token을 POST body + X-Atlassian-Token 헤더 양쪽으로 전송
   const postBody = [
     `os_username=${encodeURIComponent(CONFLUENCE_ID)}`,
     `os_password=${encodeURIComponent(CONFLUENCE_PW)}`,
@@ -125,10 +119,11 @@ async function downloadFile(slmCookieStr) {
   ].filter(Boolean).join("&");
 
   const r2 = await httpRequest(loginUrl, "POST", {
-    "Content-Type":   "application/x-www-form-urlencoded",
-    "Content-Length": Buffer.byteLength(postBody),
-    "Cookie":         cookieWithSession,
-    "Referer":        loginUrl
+    "Content-Type":        "application/x-www-form-urlencoded",
+    "Content-Length":      Buffer.byteLength(postBody),
+    "Cookie":              cookieWithSession,
+    "Referer":             loginUrl,
+    "X-Atlassian-Token":   atlToken || "no-check"
   }, postBody);
   r2.resume();
 
