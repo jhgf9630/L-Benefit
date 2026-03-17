@@ -27,15 +27,15 @@ function setSyncStatus(status) {
   }
 }
 
-// 재연동 버튼 클릭
+// 재동기화 버튼 클릭
 document.getElementById('slmReconnectBtn').addEventListener('click', async () => {
   const btn = document.getElementById('slmReconnectBtn');
-  btn.textContent = '연동 중...';
+  btn.textContent = '동기화 중...';
   btn.disabled = true;
 
   await window.syncAPI.requestSlmSync();
 
-  btn.textContent = 'SLM 재연동';
+  btn.textContent = '데이터 동기화';
   btn.disabled = false;
 });
 
