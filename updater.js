@@ -94,41 +94,64 @@ async function downloadFile(slmCookieStr) {
 
   console.log("[download] Confluence 로그인 URL:", loginUrl);
 
-  // ── 2단계: Confluence 로그인 POST ──
+  // ── 2단계: 로그인 페이지 GET → CSRF 토큰 + 세션 쿠키 획득 ──
+  const r2get = await httpRequest(loginUrl, "GET", { "Cookie": slmCookieStr });
+  const r2getBody = await readBody(r2get);
+  const setCookies2get = (r2get.headers["set-cookie"] || []).map(c => c.split(";")[0]);
+  const cookieWithSession = setCookies2get.length > 0
+    ? `${slmCookieStr}; ${setCookies2get.join("; ")}`
+    : slmCookieStr;
+
+  // atl_token (CSRF) 추출
+  // 로그인 페이지 HTML 앞부분 출력 (토큰 패턴 파악용)
+  console.log("[download] 로그인 페이지 HTML (앞 1000자):", r2getBody.substring(0, 1000));
+
+  // 다양한 패턴으로 CSRF 토큰 탐색
+  const atlTokenMatch =
+    r2getBody.match(/name="atl_token"[^>]*value="([^"]+)"/) ||
+    r2getBody.match(/value="([^"]+)"[^>]*name="atl_token"/) ||
+    r2getBody.match(/"atl_token"\s*:\s*"([^"]+)"/) ||
+    r2getBody.match(/atl_token=([^&"]+)/);
+  const atlToken = atlTokenMatch ? atlTokenMatch[1] : "";
+  console.log("[download] 2단계 GET:", r2get.statusCode, "atl_token:", atlToken || "없음", "Set-Cookie:", setCookies2get);
+
+  // ── 3단계: Confluence 로그인 POST (CSRF 토큰 포함) ──
   const postBody = [
     `os_username=${encodeURIComponent(CONFLUENCE_ID)}`,
     `os_password=${encodeURIComponent(CONFLUENCE_PW)}`,
     `os_cookie=true`,
-    `login=Log+In`
-  ].join("&");
+    `login=Log+In`,
+    atlToken ? `atl_token=${encodeURIComponent(atlToken)}` : ""
+  ].filter(Boolean).join("&");
 
   const r2 = await httpRequest(loginUrl, "POST", {
     "Content-Type":   "application/x-www-form-urlencoded",
     "Content-Length": Buffer.byteLength(postBody),
-    "Cookie":         slmCookieStr
+    "Cookie":         cookieWithSession,
+    "Referer":        loginUrl
   }, postBody);
   r2.resume();
 
   const setCookies2 = (r2.headers["set-cookie"] || []).map(c => c.split(";")[0]);
   const cookieAfterLogin = setCookies2.length > 0
-    ? `${slmCookieStr}; ${setCookies2.join("; ")}`
-    : slmCookieStr;
+    ? `${cookieWithSession}; ${setCookies2.join("; ")}`
+    : cookieWithSession;
 
-  console.log("[download] 2단계:", r2.statusCode, "Set-Cookie:", setCookies2);
+  console.log("[download] 3단계 POST:", r2.statusCode, "Set-Cookie:", setCookies2, "Location:", r2.headers.location || "");
 
   if (r2.statusCode !== 302 || !r2.headers.location) {
-    throw new Error(`Confluence 로그인 실패: ${r2.statusCode} (ID/PW 확인 필요)`);
+    throw new Error(`Confluence 로그인 실패: ${r2.statusCode} (ID/PW 또는 CSRF 토큰 확인 필요)`);
   }
 
   const fileUrl = r2.headers.location.startsWith("http")
     ? r2.headers.location
     : `http://slm.lignex1.com${r2.headers.location}`;
 
-  console.log("[download] 3단계 파일 URL:", fileUrl);
+  console.log("[download] 4단계 파일 URL:", fileUrl);
 
-  // ── 3단계: 로그인 후 파일 GET ──
+  // ── 4단계: 로그인 후 파일 GET ──
   const r3 = await httpRequest(fileUrl, "GET", { "Cookie": cookieAfterLogin });
-  console.log("[download] 3단계:", r3.statusCode);
+  console.log("[download] 4단계:", r3.statusCode);
 
   if (r3.statusCode !== 200) {
     r3.resume();
