@@ -1,192 +1,97 @@
 const fs   = require("fs");
 const path = require("path");
-const http = require("http");
-const { app } = require("electron");
+const { app, shell } = require("electron");
 
 const BUNDLE_PATH   = path.join(__dirname, "data", "affiliates.json");
 const CONF_FILE_URL = "http://slm.lignex1.com/confluence/download/attachments/181662037/affiliates.json";
-const CONFLUENCE_ID = "test_id";
-const CONFLUENCE_PW = "test_pw";
-const TIMEOUT_MS    = 10000;
+const TIMEOUT_MS    = 30000; // 다운로드 대기 최대 30초
+const POLL_INTERVAL = 1000;  // 1초마다 파일 확인
 
 function getDataPath() {
   return path.join(app.getPath("userData"), "affiliates.json");
 }
 
-function getSlmSessionPath() {
-  return path.join(app.getPath("userData"), "slm-session.json");
+// Windows 기본 다운로드 폴더
+function getDownloadDir() {
+  return app.getPath("downloads");
 }
 
-function saveSlmCookie(cookieStr) {
-  fs.writeFileSync(
-    getSlmSessionPath(),
-    JSON.stringify({ cookie: cookieStr, savedAt: Date.now() }),
-    "utf-8"
-  );
-}
-
-function loadSlmCookie() {
-  try {
-    const p = getSlmSessionPath();
-    if (!fs.existsSync(p)) return null;
-    return JSON.parse(fs.readFileSync(p, "utf-8")).cookie || null;
-  } catch { return null; }
-}
-
-// ─────────────────────────────────────────
-// 단일 HTTP 요청 → res 반환 (리다이렉트 추적 안 함)
-// ─────────────────────────────────────────
-function httpRequest(urlStr, method, headers, body) {
+// 다운로드 폴더에서 affiliates.json 파일 감지 후 userData로 복사
+function waitForDownload() {
   return new Promise((resolve, reject) => {
-    const u = new URL(urlStr);
-    const opts = {
-      hostname: u.hostname,
-      port:     u.port || 80,
-      path:     u.pathname + u.search,
-      method,
-      headers
-    };
-    const req = http.request(opts, resolve);
-    req.setTimeout(TIMEOUT_MS, () => req.destroy());
-    req.on("error", reject);
-    if (body) req.write(body);
-    req.end();
+    const downloadDir  = getDownloadDir();
+    const targetFile   = path.join(downloadDir, "affiliates.json");
+    const startTime    = Date.now();
+
+    // 기존 파일이 있으면 시작 전 mtime 기록 (새 다운로드 구분용)
+    let prevMtime = null;
+    if (fs.existsSync(targetFile)) {
+      prevMtime = fs.statSync(targetFile).mtimeMs;
+    }
+
+    console.log("[updater] 다운로드 폴더 감시 시작:", downloadDir);
+
+    const poll = setInterval(() => {
+      try {
+        if (!fs.existsSync(targetFile)) return;
+
+        const stat = fs.statSync(targetFile);
+
+        // 새로 다운로드된 파일인지 확인 (이전 mtime과 다르거나 처음 생긴 경우)
+        if (prevMtime !== null && stat.mtimeMs === prevMtime) return;
+
+        // 파일이 아직 쓰이는 중인지 확인 (크기 변화 없으면 완료)
+        const size1 = stat.size;
+        setTimeout(() => {
+          try {
+            if (!fs.existsSync(targetFile)) return;
+            const size2 = fs.statSync(targetFile).size;
+            if (size2 !== size1) return; // 아직 쓰는 중
+
+            // 다운로드 완료 → userData로 복사
+            const body = fs.readFileSync(targetFile, "utf-8");
+            JSON.parse(body); // JSON 유효성 검사
+
+            clearInterval(poll);
+            resolve(body);
+            console.log("[updater] 다운로드 완료 감지:", targetFile);
+          } catch (e) {
+            console.log("[updater] 파일 읽기 대기 중...");
+          }
+        }, 500);
+
+      } catch (e) {
+        console.error("[updater] 폴링 오류:", e.message);
+      }
+
+      // 타임아웃
+      if (Date.now() - startTime > TIMEOUT_MS) {
+        clearInterval(poll);
+        reject(new Error("다운로드 대기 시간 초과 (30초). 브라우저에서 파일이 다운로드됐는지 확인하세요."));
+      }
+    }, POLL_INTERVAL);
   });
-}
-
-function readBody(res) {
-  return new Promise((resolve, reject) => {
-    let buf = "";
-    res.on("data", c => { buf += c; });
-    res.on("end",  () => resolve(buf));
-    res.on("error", reject);
-  });
-}
-
-// ─────────────────────────────────────────
-// 파일 다운로드 전체 흐름
-//
-// [흐름]
-// 1. SLM 쿠키로 파일 GET
-//    → 302: /confluence/login.action?os_destination=.../affiliates.json
-// 2. 그 URL에 Confluence ID/PW POST
-//    → 302: /confluence/download/.../affiliates.json  (로그인 성공)
-//    → 200: 로그인 페이지 HTML                        (로그인 실패)
-// 3. 302 Location URL로 GET → 파일 수신
-// ─────────────────────────────────────────
-async function downloadFile(slmCookieStr) {
-
-  // ── 1단계: 파일 직접 요청 ──
-  const r1 = await httpRequest(CONF_FILE_URL, "GET", { "Cookie": slmCookieStr });
-  r1.resume();
-  console.log("[download] 1단계:", r1.statusCode, r1.headers.location || "");
-
-  if (r1.statusCode === 200) {
-    // SLM 쿠키만으로 바로 파일 접근 가능한 경우
-    return await readBody(r1);
-  }
-
-  if (r1.statusCode !== 302) throw new Error(`1단계 예상치 못한 응답: ${r1.statusCode}`);
-
-  const loginUrl = r1.headers.location.startsWith("http")
-    ? r1.headers.location
-    : `http://slm.lignex1.com${r1.headers.location}`;
-
-  console.log("[download] Confluence 로그인 URL:", loginUrl);
-
-  // ── 2단계: 로그인 페이지 GET → CSRF 토큰 + 세션 쿠키 획득 ──
-  const r2get = await httpRequest(loginUrl, "GET", { "Cookie": slmCookieStr });
-  const r2getBody = await readBody(r2get);
-  const setCookies2get = (r2get.headers["set-cookie"] || []).map(c => c.split(";")[0]);
-  const cookieWithSession = setCookies2get.length > 0
-    ? `${slmCookieStr}; ${setCookies2get.join("; ")}`
-    : slmCookieStr;
-
-  // atl_token (CSRF) 추출
-  // <meta name="atlassian-token" content="..."> 에서 토큰 추출
-  const atlTokenMatch = r2getBody.match(/name="atlassian-token"[^>]*content="([^"]+)"/);
-  const atlToken = atlTokenMatch ? atlTokenMatch[1] : "";
-  console.log("[download] 2단계 GET:", r2get.statusCode, "atlassian-token:", atlToken || "없음", "Set-Cookie:", setCookies2get);
-
-  // ── 3단계: Confluence 로그인 POST ──
-  // atlassian-token을 POST body + X-Atlassian-Token 헤더 양쪽으로 전송
-  const postBody = [
-    `os_username=${encodeURIComponent(CONFLUENCE_ID)}`,
-    `os_password=${encodeURIComponent(CONFLUENCE_PW)}`,
-    `os_cookie=true`,
-    `login=Log+In`,
-    atlToken ? `atl_token=${encodeURIComponent(atlToken)}` : ""
-  ].filter(Boolean).join("&");
-
-  const r2 = await httpRequest(loginUrl, "POST", {
-    "Content-Type":        "application/x-www-form-urlencoded",
-    "Content-Length":      Buffer.byteLength(postBody),
-    "Cookie":              cookieWithSession,
-    "Referer":             loginUrl,
-    "X-Atlassian-Token":   atlToken || "no-check"
-  }, postBody);
-
-  const setCookies2 = (r2.headers["set-cookie"] || []).map(c => c.split(";")[0]);
-  const cookieAfterLogin = setCookies2.length > 0
-    ? `${cookieWithSession}; ${setCookies2.join("; ")}`
-    : cookieWithSession;
-
-  console.log("[download] 3단계 POST:", r2.statusCode, "Set-Cookie:", setCookies2, "Location:", r2.headers.location || "");
-
-  // 403 응답 바디 확인
-  if (r2.statusCode === 403) {
-    const errBody = await readBody(r2);
-    console.log("[download] 403 응답 바디 (앞 500자):", errBody.substring(0, 500));
-    throw new Error(`Confluence 로그인 실패: 403`);
-  }
-
-  r2.resume();
-
-  if (r2.statusCode !== 302 || !r2.headers.location) {
-    throw new Error(`Confluence 로그인 실패: ${r2.statusCode}`);
-  }
-
-  const fileUrl = r2.headers.location.startsWith("http")
-    ? r2.headers.location
-    : `http://slm.lignex1.com${r2.headers.location}`;
-
-  console.log("[download] 4단계 파일 URL:", fileUrl);
-
-  // ── 4단계: 로그인 후 파일 GET ──
-  const r3 = await httpRequest(fileUrl, "GET", { "Cookie": cookieAfterLogin });
-  console.log("[download] 4단계:", r3.statusCode);
-
-  if (r3.statusCode !== 200) {
-    r3.resume();
-    throw new Error(`파일 GET 실패: HTTP ${r3.statusCode}`);
-  }
-
-  return await readBody(r3);
 }
 
 // ─────────────────────────────────────────
 // 메인 진입점
 // ─────────────────────────────────────────
-async function downloadJSON(url, requestSlmLogin, forceLogin = false) {
+async function downloadJSON() {
   const DATA_PATH = getDataPath();
 
   try {
-    let slmCookie = forceLogin ? null : loadSlmCookie();
+    console.log("[updater] 브라우저로 다운로드 URL 열기:", CONF_FILE_URL);
 
-    if (!slmCookie) {
-      console.log("[updater] SLM 로그인 창 요청");
-      slmCookie = await requestSlmLogin();
-      if (!slmCookie) throw new Error("SLM 로그인 취소");
-      saveSlmCookie(slmCookie);
-    }
+    // 기본 브라우저로 다운로드 URL 열기 (기존 SLM 세션으로 자동 다운로드)
+    await shell.openExternal(CONF_FILE_URL);
 
-    console.log("[updater] 파일 다운로드 시작...");
-    const body = await downloadFile(slmCookie);
-    console.log("[updater] 다운로드 성공, body 길이:", body.length);
-    console.log("[updater] body 앞 200자:", body.substring(0, 200));
-
+    // 다운로드 폴더에서 파일 감지 대기
+    const body = await waitForDownload();
     const newData = JSON.parse(body);
 
+    console.log("[updater] 파일 감지 성공, body 길이:", body.length);
+
+    // 로컬과 비교
     const comparePath = fs.existsSync(DATA_PATH) ? DATA_PATH : BUNDLE_PATH;
     let localData = null;
     if (fs.existsSync(comparePath)) {
