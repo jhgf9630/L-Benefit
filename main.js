@@ -68,7 +68,7 @@ async function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, "src", "index.html"));
-  mainWindow.webContents.openDevTools(); // 디버깅용 — 배포 전 제거
+  //mainWindow.webContents.openDevTools(); // 디버깅용 — 배포 전 제거
 
   mainWindow.webContents.on("did-finish-load", () => {
     pageLoaded = true;
