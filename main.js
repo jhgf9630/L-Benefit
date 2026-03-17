@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, session } = require('electron');
 const path = require('path');
 const fs   = require('fs');
 const { downloadJSON } = require('./updater');
@@ -41,13 +41,58 @@ function trySendSyncComplete() {
   }
 }
 
+// Electron 숨김 창으로 다운로드 — 외부 브라우저 창 없이 처리
+function requestDownload(url) {
+  return new Promise((resolve, reject) => {
+    const dlSession = session.fromPartition('persist:slm-download');
+
+    // 다운로드 경로를 기본 다운로드 폴더로 설정
+    dlSession.setDownloadPath(app.getPath("downloads"));
+
+    const hiddenWin = new BrowserWindow({
+      show: false, // 창을 화면에 표시하지 않음
+      webPreferences: {
+        session:          dlSession,
+        nodeIntegration:  false,
+        contextIsolation: true
+      }
+    });
+
+    // 다운로드 시작 이벤트 감지
+    dlSession.on("will-download", (event, item) => {
+      console.log("[download] 다운로드 시작:", item.getFilename());
+
+      item.on("done", (e, state) => {
+        hiddenWin.destroy();
+        if (state === "completed") {
+          console.log("[download] 다운로드 완료");
+          resolve();
+        } else {
+          reject(new Error(`다운로드 실패: ${state}`));
+        }
+      });
+    });
+
+    // URL 로드 → SLM 세션 쿠키로 자동 다운로드
+    hiddenWin.loadURL(url);
+
+    // 10초 안에 다운로드가 시작되지 않으면 실패 처리
+    setTimeout(() => {
+      if (!hiddenWin.isDestroyed()) {
+        hiddenWin.destroy();
+        reject(new Error("다운로드가 시작되지 않았습니다. SLM 로그인 상태를 확인하세요."));
+      }
+    }, 10000);
+  });
+}
+
 async function runSync() {
   syncStatus = { status: "loading", message: "데이터 동기화 확인 중..." };
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("sync-status-update", syncStatus);
   }
 
-  const result = await downloadJSON();
+  const result = await downloadJSON(requestDownload);
   syncStatus = result;
   syncResult = result;
 
