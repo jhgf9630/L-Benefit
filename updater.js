@@ -3,180 +3,164 @@ const path = require("path");
 const http = require("http");
 const { app } = require("electron");
 
-const BUNDLE_PATH    = path.join(__dirname, "data", "affiliates.json");
-const SLM_LOGIN_URL  = "http://slm.lignex1.com";
-const CONF_LOGIN_URL = "http://slm.lignex1.com/confluence/login.action";
-const CONF_FILE_URL  = "http://slm.lignex1.com/confluence/download/attachments/181662037/affiliates.json";
-const CONFLUENCE_ID  = "test_id";
-const CONFLUENCE_PW  = "test_pw";
-const TIMEOUT_MS     = 10000;
+const BUNDLE_PATH   = path.join(__dirname, "data", "affiliates.json");
+const CONF_FILE_URL = "http://slm.lignex1.com/confluence/download/attachments/181662037/affiliates.json";
+const CONFLUENCE_ID = "test_id";
+const CONFLUENCE_PW = "test_pw";
+const TIMEOUT_MS    = 10000;
 
 function getDataPath() {
   return path.join(app.getPath("userData"), "affiliates.json");
 }
 
-// SLM 세션 쿠키 저장 경로
 function getSlmSessionPath() {
   return path.join(app.getPath("userData"), "slm-session.json");
 }
 
-// ─────────────────────────────────────────
-// SLM 쿠키 저장 / 불러오기
-// ─────────────────────────────────────────
 function saveSlmCookie(cookieStr) {
-  const sessionPath = getSlmSessionPath();
-  fs.writeFileSync(sessionPath, JSON.stringify({ cookie: cookieStr, savedAt: Date.now() }), "utf-8");
+  fs.writeFileSync(
+    getSlmSessionPath(),
+    JSON.stringify({ cookie: cookieStr, savedAt: Date.now() }),
+    "utf-8"
+  );
 }
 
 function loadSlmCookie() {
   try {
-    const sessionPath = getSlmSessionPath();
-    if (!fs.existsSync(sessionPath)) return null;
-    const data = JSON.parse(fs.readFileSync(sessionPath, "utf-8"));
-    return data.cookie || null;
-  } catch {
-    return null;
-  }
+    const p = getSlmSessionPath();
+    if (!fs.existsSync(p)) return null;
+    return JSON.parse(fs.readFileSync(p, "utf-8")).cookie || null;
+  } catch { return null; }
 }
 
 // ─────────────────────────────────────────
-// 공통 HTTP 요청
+// 단일 HTTP 요청 → res 반환 (리다이렉트 추적 안 함)
 // ─────────────────────────────────────────
-function httpRequest(urlStr, options, body) {
+function httpRequest(urlStr, method, headers, body) {
   return new Promise((resolve, reject) => {
     const u = new URL(urlStr);
-    const reqOptions = {
+    const opts = {
       hostname: u.hostname,
       port:     u.port || 80,
       path:     u.pathname + u.search,
-      ...options
+      method,
+      headers
     };
-    const req = http.request(reqOptions, resolve);
-    req.setTimeout(TIMEOUT_MS, () => { req.destroy(); });
+    const req = http.request(opts, resolve);
+    req.setTimeout(TIMEOUT_MS, () => req.destroy());
     req.on("error", reject);
     if (body) req.write(body);
     req.end();
   });
 }
 
-// ─────────────────────────────────────────
-// SLM 쿠키 유효성 검사 (SLM 메인에 GET 요청 후 200 여부 확인)
-// ─────────────────────────────────────────
-function validateSlmCookie(cookieStr) {
-  return new Promise(async (resolve) => {
-    try {
-      const res = await httpRequest(SLM_LOGIN_URL, {
-        method: "GET",
-        headers: { "Cookie": cookieStr }
-      });
-      res.resume();
-      // 로그인 페이지로 리다이렉트되면 쿠키 만료
-      resolve(res.statusCode === 200);
-    } catch {
-      resolve(false);
-    }
+function readBody(res) {
+  return new Promise((resolve, reject) => {
+    let buf = "";
+    res.on("data", c => { buf += c; });
+    res.on("end",  () => resolve(buf));
+    res.on("error", reject);
   });
 }
 
 // ─────────────────────────────────────────
-// Confluence 공유 계정 자동 로그인 → 쿠키 반환
+// 파일 다운로드 전체 흐름
+//
+// [흐름]
+// 1. SLM 쿠키로 파일 GET
+//    → 302: /confluence/login.action?os_destination=.../affiliates.json
+// 2. 그 URL에 Confluence ID/PW POST
+//    → 302: /confluence/download/.../affiliates.json  (로그인 성공)
+//    → 200: 로그인 페이지 HTML                        (로그인 실패)
+// 3. 302 Location URL로 GET → 파일 수신
 // ─────────────────────────────────────────
-function confluenceLogin(slmCookieStr) {
-  return new Promise(async (resolve, reject) => {
-    const postBody = [
-      `os_username=${encodeURIComponent(CONFLUENCE_ID)}`,
-      `os_password=${encodeURIComponent(CONFLUENCE_PW)}`,
-      `os_cookie=true`,
-      `login=Log+In`
-    ].join("&");
+async function downloadFile(slmCookieStr) {
 
-    try {
-      const res = await httpRequest(CONF_LOGIN_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type":   "application/x-www-form-urlencoded",
-          "Content-Length": Buffer.byteLength(postBody),
-          // SLM 쿠키를 함께 전송하여 통합 로그인 세션 유지
-          "Cookie": slmCookieStr
-        }
-      }, postBody);
+  // ── 1단계: 파일 직접 요청 ──
+  const r1 = await httpRequest(CONF_FILE_URL, "GET", { "Cookie": slmCookieStr });
+  r1.resume();
+  console.log("[download] 1단계:", r1.statusCode, r1.headers.location || "");
 
-      res.resume();
+  if (r1.statusCode === 200) {
+    // SLM 쿠키만으로 바로 파일 접근 가능한 경우
+    return await readBody(r1);
+  }
 
-      const rawCookies = res.headers["set-cookie"] || [];
-      if (rawCookies.length === 0) {
-        reject(new Error("Confluence 로그인 실패: 쿠키 없음"));
-        return;
-      }
+  if (r1.statusCode !== 302) throw new Error(`1단계 예상치 못한 응답: ${r1.statusCode}`);
 
-      // SLM 쿠키 + Confluence 쿠키 합산
-      const confCookieStr = rawCookies.map(c => c.split(";")[0]).join("; ");
-      resolve(`${slmCookieStr}; ${confCookieStr}`);
-    } catch (e) {
-      reject(e);
-    }
-  });
+  const loginUrl = r1.headers.location.startsWith("http")
+    ? r1.headers.location
+    : `http://slm.lignex1.com${r1.headers.location}`;
+
+  console.log("[download] Confluence 로그인 URL:", loginUrl);
+
+  // ── 2단계: Confluence 로그인 POST ──
+  const postBody = [
+    `os_username=${encodeURIComponent(CONFLUENCE_ID)}`,
+    `os_password=${encodeURIComponent(CONFLUENCE_PW)}`,
+    `os_cookie=true`,
+    `login=Log+In`
+  ].join("&");
+
+  const r2 = await httpRequest(loginUrl, "POST", {
+    "Content-Type":   "application/x-www-form-urlencoded",
+    "Content-Length": Buffer.byteLength(postBody),
+    "Cookie":         slmCookieStr
+  }, postBody);
+  r2.resume();
+
+  const setCookies2 = (r2.headers["set-cookie"] || []).map(c => c.split(";")[0]);
+  const cookieAfterLogin = setCookies2.length > 0
+    ? `${slmCookieStr}; ${setCookies2.join("; ")}`
+    : slmCookieStr;
+
+  console.log("[download] 2단계:", r2.statusCode, "Set-Cookie:", setCookies2);
+
+  if (r2.statusCode !== 302 || !r2.headers.location) {
+    throw new Error(`Confluence 로그인 실패: ${r2.statusCode} (ID/PW 확인 필요)`);
+  }
+
+  const fileUrl = r2.headers.location.startsWith("http")
+    ? r2.headers.location
+    : `http://slm.lignex1.com${r2.headers.location}`;
+
+  console.log("[download] 3단계 파일 URL:", fileUrl);
+
+  // ── 3단계: 로그인 후 파일 GET ──
+  const r3 = await httpRequest(fileUrl, "GET", { "Cookie": cookieAfterLogin });
+  console.log("[download] 3단계:", r3.statusCode);
+
+  if (r3.statusCode !== 200) {
+    r3.resume();
+    throw new Error(`파일 GET 실패: HTTP ${r3.statusCode}`);
+  }
+
+  return await readBody(r3);
 }
 
 // ─────────────────────────────────────────
-// 세션 쿠키로 파일 다운로드
-// ─────────────────────────────────────────
-function downloadWithCookie(cookieStr) {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const res = await httpRequest(CONF_FILE_URL, {
-        method: "GET",
-        headers: { "Cookie": cookieStr }
-      });
-
-      if (res.statusCode === 301 || res.statusCode === 302) {
-        reject(new Error(`리다이렉트(${res.statusCode}): 세션이 만료됐을 수 있습니다.`));
-        return;
-      }
-      if (res.statusCode !== 200) {
-        reject(new Error(`HTTP ${res.statusCode}`));
-        return;
-      }
-
-      let body = "";
-      res.on("data", chunk => { body += chunk; });
-      res.on("end",  () => resolve(body));
-    } catch (e) {
-      reject(e);
-    }
-  });
-}
-
-// ─────────────────────────────────────────
-// 메인: SLM 쿠키 확인 → Confluence 로그인 → 다운로드 → 저장
-// forceLogin: true 이면 쿠키 유효 여부와 관계없이 강제로 로그인 창 띄움
+// 메인 진입점
 // ─────────────────────────────────────────
 async function downloadJSON(url, requestSlmLogin, forceLogin = false) {
   const DATA_PATH = getDataPath();
 
   try {
-    // 1. 저장된 SLM 쿠키 로드
-    let slmCookie = loadSlmCookie();
+    let slmCookie = forceLogin ? null : loadSlmCookie();
 
-    // 2. 강제 로그인 / 쿠키 없음 / 쿠키 만료 → 로그인 창 요청
-    const needLogin = forceLogin || !slmCookie || !(await validateSlmCookie(slmCookie));
-    if (needLogin) {
-      console.log("[updater] SLM 로그인 창 요청 (forceLogin:", forceLogin, ")");
+    if (!slmCookie) {
+      console.log("[updater] SLM 로그인 창 요청");
       slmCookie = await requestSlmLogin();
-      if (!slmCookie) throw new Error("SLM 로그인 취소 또는 실패");
+      if (!slmCookie) throw new Error("SLM 로그인 취소");
       saveSlmCookie(slmCookie);
     }
 
-    // 3. Confluence 공유 계정 자동 로그인
-    const fullCookie = await confluenceLogin(slmCookie);
+    console.log("[updater] 파일 다운로드 시작...");
+    const body = await downloadFile(slmCookie);
+    console.log("[updater] 다운로드 성공, body 길이:", body.length);
+    console.log("[updater] body 앞 200자:", body.substring(0, 200));
 
-    // 4. 파일 다운로드
-    const body = await downloadWithCookie(fullCookie);
-
-    // 5. JSON 파싱
     const newData = JSON.parse(body);
 
-    // 6. 로컬과 비교 후 저장
     const comparePath = fs.existsSync(DATA_PATH) ? DATA_PATH : BUNDLE_PATH;
     let localData = null;
     if (fs.existsSync(comparePath)) {
@@ -192,9 +176,8 @@ async function downloadJSON(url, requestSlmLogin, forceLogin = false) {
 
   } catch (e) {
     console.error("[updater] 동기화 실패:", e.message);
-    const isParseError = e.message && e.message.includes("JSON");
     return {
-      status: isParseError ? "parse_error" : "offline",
+      status:  "offline",
       message: "제휴업체/혜택 정보가 최신 버전이 아닐 수 있습니다. Confluence 연동을 확인하세요."
     };
   }
