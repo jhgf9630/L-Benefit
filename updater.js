@@ -1,6 +1,7 @@
 const fs   = require("fs");
 const path = require("path");
-const { app } = require("electron");
+const os   = require("os");
+const { app, shell } = require("electron");
 
 const BUNDLE_PATH   = path.join(__dirname, "data", "affiliates.json");
 const CONF_FILE_URL = "http://slm.lignex1.com/confluence/download/attachments/181662037/affiliates.json";
@@ -15,6 +16,44 @@ function getDownloadDir() {
   return app.getPath("downloads");
 }
 
+// 자동 다운로드 후 탭을 닫는 중간 HTML 페이지를 임시 파일로 생성
+function createBridgePage(downloadUrl) {
+  const html = `<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>L-Benefit 데이터 동기화 중...</title>
+<style>
+  body { font-family: 'Malgun Gothic', sans-serif; display:flex; align-items:center;
+         justify-content:center; height:100vh; margin:0; background:#f0f9ff; }
+  .box { text-align:center; padding:40px; background:white; border-radius:16px;
+         box-shadow:0 4px 20px rgba(0,0,0,0.1); }
+  h2 { color:#1a6b3c; margin-bottom:12px; }
+  p  { color:#6b7280; font-size:14px; }
+</style>
+</head>
+<body>
+<div class="box">
+  <h2>✅ L-Benefit 데이터 동기화</h2>
+  <p>파일을 다운로드하고 있습니다.<br>완료되면 이 탭을 닫아주세요.</p>
+</div>
+<script>
+  // 페이지 열리자마자 파일 다운로드 트리거
+  const a = document.createElement('a');
+  a.href = ${JSON.stringify(downloadUrl)};
+  a.download = 'affiliates.json';
+  document.body.appendChild(a);
+  a.click();
+
+  // 3초 후 탭 닫기 시도 (보안 정책상 안 닫힐 수 있음)
+  setTimeout(() => { window.close(); }, 3000);
+</script>
+</body>
+</html>`;
+
+  const tmpPath = path.join(os.tmpdir(), "lbenefit-sync.html");
+  fs.writeFileSync(tmpPath, html, "utf-8");
+  return tmpPath;
+}
+
 // 다운로드 폴더에서 affiliates.json 감지 → userData로 이동
 function waitForDownload() {
   return new Promise((resolve, reject) => {
@@ -22,7 +61,6 @@ function waitForDownload() {
     const targetFile  = path.join(downloadDir, "affiliates.json");
     const startTime   = Date.now();
 
-    // 시작 전 기존 파일 mtime 기록
     let prevMtime = null;
     if (fs.existsSync(targetFile)) {
       prevMtime = fs.statSync(targetFile).mtimeMs;
@@ -43,18 +81,17 @@ function waitForDownload() {
         const stat = fs.statSync(targetFile);
         if (prevMtime !== null && stat.mtimeMs === prevMtime) return;
 
-        // 파일 쓰기 완료 여부 확인 (0.5초 간격으로 크기 비교)
         const size1 = stat.size;
         setTimeout(() => {
           try {
             if (!fs.existsSync(targetFile)) return;
             const size2 = fs.statSync(targetFile).size;
-            if (size2 !== size1) return; // 아직 쓰는 중
+            if (size2 !== size1) return;
 
             const body = fs.readFileSync(targetFile, "utf-8");
             JSON.parse(body); // JSON 유효성 검사
 
-            // 원본 삭제 (다음 동기화 시 중복 파일 affiliates(1).json 방지)
+            // 원본 삭제 (다음 동기화 시 중복 파일 방지)
             try {
               fs.unlinkSync(targetFile);
               console.log("[updater] 원본 파일 삭제 완료:", targetFile);
@@ -65,7 +102,7 @@ function waitForDownload() {
             clearInterval(poll);
             resolve(body);
           } catch (e) {
-            // JSON 파싱 실패 = 아직 다운로드 중
+            // 아직 다운로드 중
           }
         }, 500);
 
@@ -78,18 +115,23 @@ function waitForDownload() {
 
 // ─────────────────────────────────────────
 // 메인 진입점
-// requestDownload: Electron 숨김 창으로 다운로드 트리거 (main.js에서 전달)
 // ─────────────────────────────────────────
-async function downloadJSON(requestDownload) {
+async function downloadJSON() {
   const DATA_PATH = getDataPath();
 
   try {
-    console.log("[updater] 다운로드 요청...");
-    await requestDownload(CONF_FILE_URL);
+    console.log("[updater] 브라우저 다운로드 트리거...");
+
+    // 중간 HTML 페이지 생성 후 기본 브라우저로 열기
+    const bridgePath = createBridgePage(CONF_FILE_URL);
+    await shell.openExternal(`file://${bridgePath}`);
 
     const body = await waitForDownload();
     const newData = JSON.parse(body);
     console.log("[updater] 파일 감지 성공, body 길이:", body.length);
+
+    // 임시 HTML 파일 삭제
+    try { fs.unlinkSync(bridgePath); } catch (e) {}
 
     const comparePath = fs.existsSync(DATA_PATH) ? DATA_PATH : BUNDLE_PATH;
     let localData = null;
