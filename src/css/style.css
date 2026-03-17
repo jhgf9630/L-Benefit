@@ -153,6 +153,18 @@ body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; font-family:
 .popup-label::after { content: ": "; }
 .popup-link    { color: #3B82F6; text-decoration: none; font-weight: bold; }
 .popup-link:hover { text-decoration: underline; }
+
+.popup-link-text {
+    color: #3B82F6;
+    font-size: 12px;
+    word-break: break-all;
+    cursor: pointer;
+    text-decoration: underline dotted;
+}
+.popup-link-text:hover {
+    background: #eff6ff;
+    border-radius: 3px;
+}
 .leaflet-popup-content { margin: 12px 16px; }
 
 /* ── 검색 결과 없음 ── */
