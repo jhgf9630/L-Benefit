@@ -55,6 +55,29 @@ body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; font-family:
 .sync-updated { color: #2563EB; }
 .sync-neutral { color: #9ca3af; }
 
+.slm-reconnect-btn {
+    margin-left: 8px;
+    padding: 3px 10px;
+    font-size: 11px;
+    background: none;
+    border: 1px solid #9ca3af;
+    border-radius: 10px;
+    color: #6b7280;
+    cursor: pointer;
+    font-family: 'Malgun Gothic', sans-serif;
+    pointer-events: all;
+    transition: all 0.15s;
+}
+.slm-reconnect-btn:hover {
+    background: #f3f4f6;
+    border-color: #6b7280;
+    color: #374151;
+}
+.slm-reconnect-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 /* ── 국내 / 해외 제휴 리스트 컨테이너 ── */
 #overseas-container {
     position: absolute; bottom: 30px; right: 20px; z-index: 1000;
