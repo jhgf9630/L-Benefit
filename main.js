@@ -24,13 +24,12 @@ function trySendSyncComplete() {
 function openSlmLoginWindow() {
   return new Promise((resolve, reject) => {
 
-    let resolved     = false;
-    let firstNavDone = false;
-    let pollTimer    = null;
+    let resolved = false;
 
+    // 로그인 창 전용 세션 생성 (persist: 로 껐다켜도 쿠키 유지)
     const loginSession = session.fromPartition('persist:slm-login');
 
-    // CSP / X-Frame-Options 헤더 제거 (iframe 로그인 허용)
+    // CSP 및 X-Frame-Options 헤더 제거 (iframe 내 로그인 버튼 동작 허용)
     loginSession.webRequest.onHeadersReceived((details, callback) => {
       const headers = { ...details.responseHeaders };
       delete headers['x-frame-options'];
@@ -43,7 +42,7 @@ function openSlmLoginWindow() {
     const loginWin = new BrowserWindow({
       width:  1000,
       height: 750,
-      title:  "SLM 로그인 — 로그인 완료 후 창이 자동으로 닫힙니다",
+      title:  "SLM 로그인 — 로그인 완료 후 아래 [연동 완료] 버튼을 눌러주세요",
       webPreferences: {
         nodeIntegration:             false,
         contextIsolation:            true,
@@ -55,81 +54,71 @@ function openSlmLoginWindow() {
 
     loginWin.loadURL(SLM_BASE_URL);
 
-    // ── URL 기반 감지 ──
-    loginWin.webContents.on("did-navigate", async (event, url) => {
-      console.log("[SLM] did-navigate:", url);
-      if (!firstNavDone) { firstNavDone = true; return; }
-      await checkLoginSuccess(url);
+    // 창 하단에 "연동 완료" 버튼 오버레이 삽입
+    loginWin.webContents.on("did-finish-load", () => {
+      loginWin.webContents.executeJavaScript(`
+        (function() {
+          if (document.getElementById('_lbenefit_done_btn')) return;
+          const btn = document.createElement('button');
+          btn.id = '_lbenefit_done_btn';
+          btn.innerText = '✅ SLM 로그인 완료 — 클릭하여 연동';
+          btn.style.cssText = [
+            'position:fixed', 'bottom:0', 'left:0', 'width:100%',
+            'z-index:999999', 'padding:14px',
+            'background:#1a6b3c', 'color:white',
+            'font-size:16px', 'font-weight:bold',
+            'border:none', 'cursor:pointer',
+            'letter-spacing:0.05em'
+          ].join(';');
+          btn.onclick = () => { window._lbenefit_login_done = true; };
+          document.body.appendChild(btn);
+        })();
+      `).catch(() => {});
     });
 
-    loginWin.webContents.on("did-navigate-in-page", async (event, url) => {
-      console.log("[SLM] did-navigate-in-page:", url);
-      if (!firstNavDone) return;
-      await checkLoginSuccess(url);
-    });
-
-    // ── 쿠키 폴링: 1초마다 SLM 세션 쿠키 존재 여부 확인 ──
-    // URL 감지가 실패해도 쿠키가 생기면 로그인 완료로 처리
-    pollTimer = setInterval(async () => {
-      if (resolved) { clearInterval(pollTimer); return; }
+    // 버튼 클릭 여부를 0.5초마다 폴링
+    const pollInterval = setInterval(async () => {
+      if (resolved || loginWin.isDestroyed()) {
+        clearInterval(pollInterval);
+        return;
+      }
       try {
-        const cookies = await loginSession.cookies.get({ domain: "slm.lignex1.com" });
-        // SLM 인증 쿠키가 있는지 확인 (이름에 SESSION, JSESSION, TOKEN 포함)
-        const authCookies = cookies.filter(c =>
-          /session|token|jsession|sso/i.test(c.name)
+        const clicked = await loginWin.webContents.executeJavaScript(
+          'window._lbenefit_login_done === true'
         );
-        if (authCookies.length > 0) {
-          console.log("[SLM] 폴링으로 인증 쿠키 감지:", authCookies.map(c => c.name));
-          await handleLoginSuccess();
-        }
-      } catch (e) {
-        console.error("[SLM] 폴링 오류:", e.message);
-      }
-    }, 1000);
+        if (!clicked) return;
 
-    async function checkLoginSuccess(url) {
-      if (resolved) return;
-      const isAuthPage = ["login", "otp", "auth", "sso", "logout", "dologin"].some(
-        kw => url.toLowerCase().includes(kw)
-      );
-      if (isAuthPage) return;
-
-      const u = new URL(url);
-      if (u.hostname === "slm.lignex1.com") {
-        await handleLoginSuccess();
-      }
-    }
-
-    async function handleLoginSuccess() {
-      if (resolved) return;
-      try {
+        // 버튼 클릭됨 → 쿠키 수집
         const [cookies1, cookies2] = await Promise.all([
-          loginSession.cookies.get({ domain: "slm.lignex1.com" }),
-          session.defaultSession.cookies.get({ domain: "slm.lignex1.com" })
+          loginSession.cookies.get({ domain: ".lignex1.com" }),
+          session.defaultSession.cookies.get({ domain: ".lignex1.com" })
         ]);
-        const allCookies = [...cookies1, ...cookies2];
-        const uniqueCookies = allCookies.filter(
+        const allCookies = [...cookies1, ...cookies2].filter(
           (c, i, arr) => arr.findIndex(x => x.name === c.name) === i
         );
-        console.log("[SLM] 쿠키 추출:", uniqueCookies.map(c => c.name));
+        console.log("[SLM] 쿠키 추출:", allCookies.map(c => `${c.name}(${c.domain})`));
 
-        if (uniqueCookies.length > 0) {
+        if (allCookies.length > 0) {
           resolved = true;
-          clearInterval(pollTimer);
-          const cookieStr = uniqueCookies.map(c => `${c.name}=${c.value}`).join("; ");
+          clearInterval(pollInterval);
+          const cookieStr = allCookies.map(c => `${c.name}=${c.value}`).join("; ");
           loginWin.destroy();
           resolve(cookieStr);
+        } else {
+          // 쿠키가 없으면 아직 로그인 안 된 것 → 버튼 초기화해서 재시도 유도
+          await loginWin.webContents.executeJavaScript(
+            'window._lbenefit_login_done = false;'
+          ).catch(() => {});
+          console.log("[SLM] 쿠키 없음 — 아직 로그인 전입니다.");
         }
       } catch (e) {
-        console.error("[SLM] 쿠키 추출 오류:", e.message);
+        // executeJavaScript 실패 (페이지 전환 중) → 무시
       }
-    }
+    }, 500);
 
     loginWin.on("closed", () => {
-      clearInterval(pollTimer);
-      if (!resolved) {
-        reject(new Error("SLM 로그인 창이 닫혔습니다."));
-      }
+      clearInterval(pollInterval);
+      if (!resolved) reject(new Error("SLM 로그인 창이 닫혔습니다."));
     });
   });
 }
