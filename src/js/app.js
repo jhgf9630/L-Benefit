@@ -217,20 +217,50 @@ function getCategoryIcon(category) {
 }
 
 // ─── 팝업 HTML ───
-// 링크 텍스트 클릭 시 클립보드 복사
+// 링크 텍스트 클릭 시 클립보드 복사 + 토스트 알림
 document.addEventListener('click', (e) => {
   if (e.target.classList.contains('popup-link-text')) {
     navigator.clipboard.writeText(e.target.textContent).then(() => {
-      const orig = e.target.title;
-      e.target.title = '복사됨!';
-      e.target.style.color = '#16a34a';
-      setTimeout(() => {
-        e.target.title = orig;
-        e.target.style.color = '';
-      }, 1500);
-    }).catch(() => {});
+      showToast('🔗 링크가 복사되었습니다.');
+    }).catch(() => {
+      showToast('복사에 실패했습니다.', true);
+    });
   }
 });
+
+function showToast(message, isError = false) {
+  // 기존 토스트 제거
+  const existing = document.getElementById('copyToast');
+  if (existing) existing.remove();
+
+  const toast = document.createElement('div');
+  toast.id = 'copyToast';
+  toast.textContent = message;
+  toast.style.cssText = [
+    'position:fixed',
+    'bottom:60px',
+    'left:50%',
+    'transform:translateX(-50%)',
+    'z-index:9999',
+    `background:${isError ? '#ef4444' : '#1a6b3c'}`,
+    'color:white',
+    'padding:10px 24px',
+    'border-radius:20px',
+    'font-size:14px',
+    'font-family:Malgun Gothic,sans-serif',
+    'box-shadow:0 4px 12px rgba(0,0,0,0.2)',
+    'opacity:1',
+    'transition:opacity 0.3s'
+  ].join(';');
+
+  document.body.appendChild(toast);
+
+  // 1.5초 후 페이드 아웃 후 제거
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    setTimeout(() => toast.remove(), 300);
+  }, 1500);
+}
 
 function buildPopupHTML(item) {
   const address = item.address ? `<div class="popup-row">📍 <span class="popup-label">주소</span>${item.address}</div>` : '';
