@@ -125,7 +125,6 @@ async function downloadFile(slmCookieStr) {
     "Referer":             loginUrl,
     "X-Atlassian-Token":   atlToken || "no-check"
   }, postBody);
-  r2.resume();
 
   const setCookies2 = (r2.headers["set-cookie"] || []).map(c => c.split(";")[0]);
   const cookieAfterLogin = setCookies2.length > 0
@@ -134,8 +133,17 @@ async function downloadFile(slmCookieStr) {
 
   console.log("[download] 3단계 POST:", r2.statusCode, "Set-Cookie:", setCookies2, "Location:", r2.headers.location || "");
 
+  // 403 응답 바디 확인
+  if (r2.statusCode === 403) {
+    const errBody = await readBody(r2);
+    console.log("[download] 403 응답 바디 (앞 500자):", errBody.substring(0, 500));
+    throw new Error(`Confluence 로그인 실패: 403`);
+  }
+
+  r2.resume();
+
   if (r2.statusCode !== 302 || !r2.headers.location) {
-    throw new Error(`Confluence 로그인 실패: ${r2.statusCode} (ID/PW 또는 CSRF 토큰 확인 필요)`);
+    throw new Error(`Confluence 로그인 실패: ${r2.statusCode}`);
   }
 
   const fileUrl = r2.headers.location.startsWith("http")
