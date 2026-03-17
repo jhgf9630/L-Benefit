@@ -149,18 +149,20 @@ function downloadWithCookie(cookieStr) {
 
 // ─────────────────────────────────────────
 // 메인: SLM 쿠키 확인 → Confluence 로그인 → 다운로드 → 저장
+// forceLogin: true 이면 쿠키 유효 여부와 관계없이 강제로 로그인 창 띄움
 // ─────────────────────────────────────────
-async function downloadJSON(url, requestSlmLogin) {
+async function downloadJSON(url, requestSlmLogin, forceLogin = false) {
   const DATA_PATH = getDataPath();
 
   try {
     // 1. 저장된 SLM 쿠키 로드
     let slmCookie = loadSlmCookie();
 
-    // 2. 쿠키 없거나 만료 → 로그인 창 요청
-    if (!slmCookie || !(await validateSlmCookie(slmCookie))) {
-      console.log("[updater] SLM 쿠키 없음 또는 만료 → 로그인 창 요청");
-      slmCookie = await requestSlmLogin(); // main.js에서 BrowserWindow로 처리
+    // 2. 강제 로그인 / 쿠키 없음 / 쿠키 만료 → 로그인 창 요청
+    const needLogin = forceLogin || !slmCookie || !(await validateSlmCookie(slmCookie));
+    if (needLogin) {
+      console.log("[updater] SLM 로그인 창 요청 (forceLogin:", forceLogin, ")");
+      slmCookie = await requestSlmLogin();
       if (!slmCookie) throw new Error("SLM 로그인 취소 또는 실패");
       saveSlmCookie(slmCookie);
     }
