@@ -24,7 +24,8 @@ function trySendSyncComplete() {
 function openSlmLoginWindow() {
   return new Promise((resolve, reject) => {
 
-    let resolved = false;
+    let resolved    = false;
+    let firstNavDone = false; // 최초 페이지 로드 무시용 플래그
 
     const loginWin = new BrowserWindow({
       width:  1000,
@@ -38,15 +39,21 @@ function openSlmLoginWindow() {
 
     loginWin.loadURL(SLM_BASE_URL);
 
-    // 모든 페이지 이동 URL을 터미널에 출력 (디버깅용)
     loginWin.webContents.on("did-navigate", async (event, url) => {
       console.log("[SLM] did-navigate:", url);
+
+      // 최초 로드(SLM_BASE_URL 진입)는 무시하고 플래그만 세팅
+      if (!firstNavDone) {
+        firstNavDone = true;
+        return;
+      }
+
       await checkLoginSuccess(url);
     });
 
-    // SPA 내부 라우팅(pushState 등)도 감지
     loginWin.webContents.on("did-navigate-in-page", async (event, url) => {
       console.log("[SLM] did-navigate-in-page:", url);
+      if (!firstNavDone) return;
       await checkLoginSuccess(url);
     });
 
@@ -55,10 +62,14 @@ function openSlmLoginWindow() {
       try {
         const u = new URL(url);
 
-        // login / otp / auth / sso 관련 페이지가 아닌 slm.lignex1.com 페이지면 로그인 완료로 간주
-        const isLoginPage = ["login", "otp", "auth", "sso", "logout"].some(kw => url.toLowerCase().includes(kw));
+        // 로그인/인증 관련 페이지이면 아직 로그인 중 → 무시
+        const isAuthPage = ["login", "otp", "auth", "sso", "logout", "dologin"].some(
+          kw => url.toLowerCase().includes(kw)
+        );
+        if (isAuthPage) return;
 
-        if (u.hostname === "slm.lignex1.com" && !isLoginPage) {
+        // slm.lignex1.com 도메인의 일반 페이지에 도달 = 로그인 완료
+        if (u.hostname === "slm.lignex1.com") {
           const cookies = await session.defaultSession.cookies.get({ domain: "slm.lignex1.com" });
           console.log("[SLM] 쿠키 추출:", cookies.map(c => c.name));
 
@@ -83,15 +94,16 @@ function openSlmLoginWindow() {
 }
 
 // ─────────────────────────────────────────
-// 동기화 실행 (외부에서도 호출 가능)
+// 동기화 실행
+// forceLogin: true 이면 쿠키 무시하고 로그인 창 강제 오픈
 // ─────────────────────────────────────────
-async function runSync() {
+async function runSync(forceLogin = false) {
   syncStatus = { status: "loading", message: "데이터 동기화 확인 중..." };
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("sync-status-update", syncStatus);
   }
 
-  const result = await downloadJSON(DATA_URL, openSlmLoginWindow);
+  const result = await downloadJSON(DATA_URL, openSlmLoginWindow, forceLogin);
   syncStatus = result;
   syncResult = result;
 
@@ -137,9 +149,9 @@ ipcMain.handle("read-bundle-data", () => {
   }
 });
 
-// 수동 재연동 IPC
+// 수동 재연동 IPC — 항상 로그인 창 강제 오픈
 ipcMain.handle("request-slm-sync", async () => {
-  await runSync();
+  await runSync(true);
   return syncStatus;
 });
 
